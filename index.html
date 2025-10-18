@@ -31,6 +31,13 @@
     footer{margin-top:18px;color:var(--muted);font-size:13px;text-align:center}
     .success{color:#86efac}
     .danger{color:#fca5a5}
+
+    /* login overlay */
+    .overlay{position:fixed;inset:0;background:rgba(2,6,23,0.75);display:flex;align-items:center;justify-content:center;z-index:50}
+    .login-card{width:420px;padding:20px;border-radius:12px;background:linear-gradient(180deg,#071028,#081526);box-shadow:0 10px 30px rgba(0,0,0,0.6);border:1px solid rgba(255,255,255,0.03)}
+    .login-card h2{margin:0 0 8px 0}
+    .login-note{font-size:13px;color:var(--muted);margin-bottom:8px}
+    .logout{background:transparent;border:1px solid rgba(255,255,255,0.06);padding:6px 8px;border-radius:8px;color:var(--muted);cursor:pointer}
   </style>
 </head>
 <body>
@@ -39,14 +46,19 @@
       <div style="width:46px;height:46px;border-radius:8px;background:linear-gradient(135deg,#0ea5e9,#06b6d4);display:flex;align-items:center;justify-content:center;font-weight:700;color:#022">PK</div>
       <div>
         <h1>Praktiki — Internship Equivalence PoC (Frontend)</h1>
-        <div class="muted">Single-file demo: Student submit → WMD-like matching → Credit calc → ABC-simulator</div>
+        <div class="muted">Single-file demo with Student & Mentor interfaces (login required)</div>
+      </div>
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+        <div id="currentUser" class="muted small">Not logged in</div>
+        <button id="logoutBtn" class="logout" style="display:none">Logout</button>
       </div>
     </header>
 
     <div class="grid">
       <div class="left-col">
 
-        <div class="card" id="studentCard">
+        <!-- STUDENT CARD -->
+        <div class="card" id="studentCard" style="display:none">
           <div class="topline"><strong>Student — Submit Internship</strong><span class="pill" id="studentStatus">Not submitted</span></div>
 
           <div style="margin-top:12px">
@@ -106,7 +118,8 @@ Documented deployment best practices for scalability and security.</textarea>
           </div>
         </div>
 
-        <div class="card" id="mentorCard">
+        <!-- MENTOR CARD -->
+        <div class="card" id="mentorCard" style="display:none">
           <div class="topline"><strong>Mentor — Run WMD & Push to ABC</strong><span class="pill" id="mentorMode">Simulator: success</span></div>
 
           <div style="margin-top:12px">
@@ -197,7 +210,39 @@ Documented deployment best practices for scalability and security.</textarea>
     <footer>Built-in frontend PoC — client-only simulation. To connect to a real backend, replace simulated functions with API calls.</footer>
   </div>
 
+  <!-- LOGIN OVERLAY -->
+  <div class="overlay" id="loginOverlay">
+    <div class="login-card">
+      <h2>Sign in</h2>
+      <div class="login-note">Use one of the trial accounts below to access Student or Mentor interface.</div>
+      <div class="login-note">Student → username: <strong>student1</strong> | password: <strong>studentpass</strong></div>
+      <div class="login-note">Mentor  → username: <strong>mentor1</strong>  | password: <strong>mentorpass</strong></div>
+
+      <div style="margin-top:10px">
+        <label>Username</label>
+        <input id="loginUser" placeholder="username" />
+      </div>
+      <div style="margin-top:8px">
+        <label>Password</label>
+        <input id="loginPass" type="password" placeholder="password" />
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button id="loginBtn">Login</button>
+        <button id="demoStudent">Quick Student</button>
+        <button id="demoMentor">Quick Mentor</button>
+      </div>
+      <div id="loginMsg" class="muted small" style="margin-top:8px"></div>
+    </div>
+  </div>
+
 <script>
+/* ----------------------------- Demo accounts ---------------------------- */
+const demoAccounts = {
+  student1: {password:'studentpass', role:'student', display:'Student: student1'},
+  mentor1: {password:'mentorpass', role:'mentor', display:'Mentor: mentor1'}
+};
+let currentUser = null;
+
 /* ----------------------------- Demo data & helpers ---------------------------- */
 const descriptors = [
   {ref_id:'UGC-INT-CLOUD-01', title:'Cloud Infra Deployment', descriptor_text:'Students will demonstrate ability to deploy cloud-based infrastructure, including compute, storage, and networking resources, with emphasis on scalability and security.', level:'UG', min_weeks:2, min_hours:120, domain_tags:['Cloud']},
@@ -210,9 +255,7 @@ function uid(prefix='INT'){
 }
 
 function daysBetween(a,b){ const A=new Date(a),B=new Date(b); return Math.round((B-A)/(1000*60*60*24)); }
-
 function weeksBetween(a,b){ return Math.max(1, Math.round(daysBetween(a,b)/7)); }
-
 function log(msg){ const box=document.getElementById('logBox'); box.innerHTML = '['+new Date().toLocaleTimeString()+'] '+msg + '<br/>' + box.innerHTML; }
 
 /* ----------------------------- Persistence ---------------------------- */
@@ -222,7 +265,6 @@ function updateInternship(id, patch){ const all = JSON.parse(localStorage.getIte
 function listInternships(){ return JSON.parse(localStorage.getItem('internships') || '[]'); }
 
 /* ----------------------------- Simple "semantic" matching (PoC) ---------------------------- */
-// This is not real WMD. It is a lightweight approximation using token overlap + synonyms map + fuzzy scoring.
 const synonyms = { 'ci/cd':['cicd','continuous integration','continuous deployment','pipeline','ci cd'], 'deployment':['deploy','deployment','deploying'], 'monitoring':['monitor','monitoring','grafana','prometheus'] };
 function normalizeText(t){ return t.toLowerCase().replace(/[^a-z0-9\s/+-]/g,' ').split(/\s+/).filter(Boolean); }
 function scoreSimilarity(internText, descText, keywordsBoost=[]){
@@ -231,11 +273,8 @@ function scoreSimilarity(internText, descText, keywordsBoost=[]){
   const iSet = new Set(iTokens);
   let overlap=0;
   dTokens.forEach(tok=>{ if(iSet.has(tok)) overlap++; Object.keys(synonyms).forEach(k=>{ if(synonyms[k].includes(tok) && iTokens.some(it=>synonyms[k].includes(it))) overlap += 0.6; }); });
-  // keyword boost
   let kwBoost=0; keywordsBoost.forEach(k=>{ if(internText.toLowerCase().includes(k.toLowerCase())) kwBoost += 0.2; });
-  // normalize
   const raw = overlap / Math.max(dTokens.length,1);
-  // map to 0..1
   const wmd_like = Math.min(1, raw + Math.min(0.6, kwBoost));
   return Number(wmd_like.toFixed(3));
 }
@@ -245,12 +284,11 @@ function computeComposite(wmd, stu_hours, stu_weeks, level, ref){
   const sim_hours = 1 - Math.min(1, Math.abs(stu_hours - ref.min_hours) / Math.max(ref.min_hours,1));
   const sim_weeks = 1 - Math.min(1, Math.abs(stu_weeks - ref.min_weeks) / Math.max(ref.min_weeks,1));
   const sim_level = (level && ref.level && level===ref.level) ? 1 : 0;
-  const sim_domain = (ref.domain_tags && ref.domain_tags.length>0) ? 1 : 0; // placeholder
+  const sim_domain = (ref.domain_tags && ref.domain_tags.length>0) ? 1 : 0;
   const w1=0.55,w2=0.15,w3=0.15,w4=0.10,w5=0.05;
   const S = w1*wmd + w2*sim_hours + w3*sim_weeks + w4*sim_level + w5*sim_domain;
   return Number(S.toFixed(3));
 }
-
 function decide(S){ if(S>=0.72) return 'Equivalent'; if(S>=0.55) return 'Partially Equivalent'; return 'Not Equivalent'; }
 
 /* ----------------------------- Credit rule ---------------------------- */
@@ -258,7 +296,6 @@ function computeCredits(total_hours, duration_weeks){ if(duration_weeks < 2) ret
 
 /* ----------------------------- ABC simulator ---------------------------- */
 function abcSimulator(payload, mode='success'){
-  // deterministic token
   const hash = btoa(JSON.stringify(payload)).slice(0,12).replace(/=/g,'X');
   const abc_token = 'ABC-TOK-' + hash;
   if(mode==='success'){ return {status:'UPLOADED', abc_token, received_at: new Date().toISOString()}; }
@@ -268,11 +305,11 @@ function abcSimulator(payload, mode='success'){
 
 /* ----------------------------- UI wiring ---------------------------- */
 function renderDescriptors(){ const tbody = document.querySelector('#descTable tbody'); tbody.innerHTML=''; descriptors.forEach(d=>{ const tr=document.createElement('tr'); tr.innerHTML = `<td>${d.ref_id}</td><td>${d.title}</td><td>${d.min_hours}</td>`; tbody.appendChild(tr); }); }
-
 function refreshDashboard(){ const all = listInternships(); const cum = all.reduce((s,x)=>s + (x.credit_value || 0),0); document.getElementById('cumulativeCredits').innerText = cum; document.getElementById('dashCredits').innerText = 'Credits: ' + cum; if(all.length){ const latest=all[all.length-1]; document.getElementById('dashboardLatest').innerText = `Latest: ${latest.internship_id} — ${latest.status} ${latest.abc_token?(' | abc:'+latest.abc_token):''}`; document.getElementById('lastInternId').innerText = latest.internship_id; document.getElementById('lastSummary').innerText = latest.plain_summary || ''; } }
 
 /* Submit student internship */
 document.getElementById('submitInternship').addEventListener('click', ()=>{
+  if(!currentUser || currentUser.role!=='student'){ alert('Only logged-in students can submit internships'); return; }
   const apaar_id = document.getElementById('apaar_id').value || 'APAAR-IND-2025-001';
   const name = document.getElementById('student_name').value || 'Tanmay';
   const inst = document.getElementById('institution_code').value || 'UPES001';
@@ -307,6 +344,7 @@ document.getElementById('seedExample').addEventListener('click', ()=>{
 
 /* Mentor: pick internship */
 document.getElementById('searchBtn').addEventListener('click', ()=>{
+  if(!currentUser || currentUser.role!=='mentor'){ alert('Only logged-in mentors can pick internships'); return; }
   const key = document.getElementById('searchKey').value.trim();
   if(!key){ alert('Enter internship id or APAAR id'); return; }
   const rec = getInternshipByIdOrApa(key);
@@ -317,6 +355,7 @@ document.getElementById('searchBtn').addEventListener('click', ()=>{
 
 /* Run WMD (simulated) */
 document.getElementById('runWmdBtn').addEventListener('click', ()=>{
+  if(!currentUser || currentUser.role!=='mentor'){ alert('Only logged-in mentors can run WMD'); return; }
   const key = document.getElementById('searchKey').value.trim(); const rec = getInternshipByIdOrApa(key);
   if(!rec){ alert('Pick an internship first'); return; }
   const kws = (document.getElementById('equivKeywords').value || '').split(',').map(x=>x.trim()).filter(Boolean);
@@ -326,17 +365,15 @@ document.getElementById('runWmdBtn').addEventListener('click', ()=>{
     const S = computeComposite(wmd, rec.total_hours, stu_weeks, 'UG', d);
     return {...d, wmd, S, decision:decide(S)};
   }).sort((a,b)=>b.S - a.S).slice(0,5);
-  // update UI
   const box = document.getElementById('topMatchesBox'); box.innerHTML = '';
   results.forEach(r=>{ const div = document.createElement('div'); div.innerHTML = `<div style="margin-bottom:8px"><strong>${r.ref_id}</strong> — ${r.title}<div class="muted small">wmd:${r.wmd} · S:${r.S} · ${r.decision}</div></div>`; box.appendChild(div); });
-  // store run
   updateInternship(rec.internship_id, { last_wmd_run: { results, run_at:new Date().toISOString() } });
   log('Ran WMD-like matching for '+rec.internship_id);
 });
 
 /* Push to ABC (simulated) */
 document.getElementById('pushAbcBtn').addEventListener('click', ()=>{
-  const mode = document.getElementById('simMode').value;
+  if(!currentUser || currentUser.role!=='mentor'){ alert('Only logged-in mentors can push to ABC'); return; }
   const key = document.getElementById('searchKey').value.trim(); const rec = getInternshipByIdOrApa(key);
   if(!rec){ alert('Pick an internship first'); return; }
   const run = rec.last_wmd_run && rec.last_wmd_run.results && rec.last_wmd_run.results.length? rec.last_wmd_run.results[0] : descriptors[0];
@@ -373,8 +410,29 @@ document.getElementById('viewSubmissions').addEventListener('click', ()=>{
 /* Clear all */
 document.getElementById('clearAll').addEventListener('click', ()=>{ if(!confirm('Clear all internships from local storage?')) return; localStorage.removeItem('internships'); document.getElementById('logBox').innerHTML='Cleared.'; refreshDashboard(); document.getElementById('lastInternId').innerText='—'; });
 
+/* ----------------------------- Login handling ---------------------------- */
+function showOverlay(show){ document.getElementById('loginOverlay').style.display = show? 'flex':'none'; }
+function showRoleUI(role){ document.getElementById('studentCard').style.display = role==='student'? 'block':'none'; document.getElementById('mentorCard').style.display = role==='mentor'? 'block':'none'; document.getElementById('logoutBtn').style.display = 'inline-block'; document.getElementById('currentUser').innerText = currentUser? currentUser.display : 'Not logged in'; }
+
+document.getElementById('loginBtn').addEventListener('click', ()=>{
+  const u = document.getElementById('loginUser').value.trim(); const p = document.getElementById('loginPass').value;
+  const msg = document.getElementById('loginMsg');
+  if(!u || !p){ msg.innerText = 'Enter username and password'; return; }
+  const acct = demoAccounts[u];
+  if(!acct || acct.password !== p){ msg.innerText = 'Invalid credentials'; return; }
+  currentUser = {username:u, role:acct.role, display:acct.display};
+  showOverlay(false); showRoleUI(acct.role); log('User logged in: '+acct.display);
+});
+
+document.getElementById('demoStudent').addEventListener('click', ()=>{ document.getElementById('loginUser').value='student1'; document.getElementById('loginPass').value='studentpass'; document.getElementById('loginBtn').click(); });
+document.getElementById('demoMentor').addEventListener('click', ()=>{ document.getElementById('loginUser').value='mentor1'; document.getElementById('loginPass').value='mentorpass'; document.getElementById('loginBtn').click(); });
+
+document.getElementById('logoutBtn').addEventListener('click', ()=>{ currentUser=null; showOverlay(true); document.getElementById('studentCard').style.display='none'; document.getElementById('mentorCard').style.display='none'; document.getElementById('currentUser').innerText='Not logged in'; document.getElementById('logoutBtn').style.display='none'; log('User logged out'); });
+
 /* Init */
-renderDescriptors(); refreshDashboard(); log('UI ready');
+renderDescriptors(); refreshDashboard(); showOverlay(true); log('UI ready — login required');
 </script>
 </body>
 </html>
+
+
